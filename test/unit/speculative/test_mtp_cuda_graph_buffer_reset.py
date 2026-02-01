@@ -1,9 +1,13 @@
 """
 Unit test for MTP CUDA graph buffer reset functionality.
 
-This test verifies that the reset_buffers method in MultiLayerEagleMultiStepDraftExtendCudaGraphRunner
-properly resets all buffers, including per-runner buffers like hidden_states, extend_seq_lens, and
-extend_start_loc. This is critical for MTP (Multi-Token Prediction) correctness with CUDA graphs.
+This test verifies the logic for the reset_buffers method in MultiLayerEagleMultiStepDraftExtendCudaGraphRunner.
+It tests that all buffers are properly reset, including per-runner buffers like hidden_states, extend_seq_lens,
+and extend_start_loc. This is critical for MTP (Multi-Token Prediction) correctness with CUDA graphs.
+
+Note: This is a logic verification test rather than a full integration test, as setting up the full
+MultiLayerEagleMultiStepDraftExtendCudaGraphRunner requires GPU resources, model loading, and CUDA graph
+capture infrastructure.
 """
 
 import unittest
