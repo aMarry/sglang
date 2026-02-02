@@ -688,10 +688,6 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
             # accept_index has shape (bs, spec_steps+1) containing indices of accepted tokens
             # We need the last accepted token index per request
             
-            # Flatten accept_index to get all accepted indices
-            # accept_index contains -1 for non-accepted positions
-            accepted_indices_mask = accept_index >= 0
-            
             # Calculate cumulative accepted lengths to find request boundaries
             cumulative_accepted_lengths = torch.cumsum(accept_length, dim=0)
             
