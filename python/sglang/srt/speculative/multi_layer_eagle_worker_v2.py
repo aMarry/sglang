@@ -679,6 +679,97 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
         verify_done = torch.get_device_module(self.device).Event()
         verify_done.record()
 
+        # Update Mamba state after MTP verify for models with hybrid GDN config
+        if (
+            self.target_worker.model_runner.hybrid_gdn_config is not None
+            and not batch.forward_mode.is_idle()
+        ):
+            # Calculate accepted_steps for mamba state update
+            # accept_index has shape (bs, spec_steps+1) containing indices of accepted tokens
+            # We need the last accepted token index per request
+            
+            # Flatten accept_index to get all accepted indices
+            # accept_index contains -1 for non-accepted positions
+            accepted_indices_mask = accept_index >= 0
+            
+            # Calculate cumulative accepted lengths to find request boundaries
+            cumulative_accepted_lengths = torch.cumsum(accept_length, dim=0)
+            
+            # Calculate offset for each request in the flattened draft token array
+            accepted_indices_offset = torch.arange(
+                0,
+                bs * verify_input.draft_token_num,
+                step=verify_input.draft_token_num,
+                dtype=accept_length.dtype,
+                device=accept_length.device,
+            )
+            
+            # If topk > 1, we need to handle the eagle tree structure
+            # accepted_steps represents the relative index of the last accepted token within each request's draft tokens
+            if verify_input.topk > 1 and accept_length.sum() > 0:
+                # For each request, find the last accepted token's global index
+                # accept_index is (bs, spec_steps+1), we need the last non-negative index per row
+                # Use accept_length to determine how many tokens were accepted per request
+                
+                # Get the last accepted token index for each request
+                # accept_length is already +1 for the bonus token, so we use accept_length-1 for indexing
+                last_accepted_idx_per_req = (accept_length - 1).clamp(min=0)
+                
+                # Extract the last accepted token's position from accept_index
+                # accept_index shape: (bs, spec_steps+1)
+                batch_indices = torch.arange(bs, device=accept_length.device)
+                last_token_global_indices = accept_index[
+                    batch_indices, last_accepted_idx_per_req
+                ]
+                
+                # Calculate relative indices by subtracting the offset
+                accepted_steps = last_token_global_indices - accepted_indices_offset
+            else:
+                # For topk=1 or simpler cases, the accepted step is simply accept_length - 1
+                accepted_steps = accept_length - 1
+            
+            # Handle mamba tracking for prefix caching
+            if batch.mamba_track_indices is not None:
+                seq_lens_pre_verify = batch.seq_lens - accept_length
+                mamba_track_interval = self.server_args.mamba_track_interval
+                
+                # Check if any request crossed a mamba track interval boundary
+                to_track_mask = (
+                    seq_lens_pre_verify // mamba_track_interval
+                    != batch.seq_lens // mamba_track_interval
+                )
+                
+                # Calculate the tracking point (the boundary that was crossed)
+                tracking_point = (
+                    batch.seq_lens // mamba_track_interval * mamba_track_interval
+                )
+                
+                # Find which token index corresponds to the tracking point
+                to_track_ith = torch.clamp(
+                    tracking_point - seq_lens_pre_verify - 1, min=0
+                )
+                
+                # Get the global index of the token at the tracking point
+                mamba_steps_to_track = torch.where(
+                    to_track_mask,
+                    accept_index[
+                        torch.arange(bs, device=to_track_ith.device),
+                        to_track_ith,
+                    ]
+                    - accepted_indices_offset,
+                    -1,
+                )
+            else:
+                mamba_steps_to_track = None
+            
+            # Update mamba state with the calculated indices
+            self.target_worker.model_runner.attn_backend.update_mamba_state_after_mtp_verify(
+                accepted_steps=accepted_steps,
+                mamba_track_indices=batch.mamba_track_indices,
+                mamba_steps_to_track=mamba_steps_to_track,
+                model=self.target_worker.model_runner.model,
+            )
+
         if not batch.forward_mode.is_idle():
             all_verified_id = predict[accept_index]
             verified_id = torch.empty_like(accept_length, dtype=torch.int32)
