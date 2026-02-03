@@ -3093,7 +3093,8 @@ def require_attn_tp_gather(server_args: ServerArgs):
             dp_size = max(server_args.dp_size, 1)
             # For tp-only (dp_size == 1) still use TP gather/A2A so that tp4+dp1 runs over NCCL.
             if dp_size <= 1:
-                return server_args.tp_size > 1
+                # Explicitly prefer NCCL backend when possible.
+                return server_args.tp_size > 1 and server_args.attention_backend != "flashinfer_kernel"
             if dp_size >= server_args.tp_size:
                 return False
             return True
