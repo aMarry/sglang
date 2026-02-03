@@ -3089,9 +3089,10 @@ def require_attn_tp_gather(server_args: ServerArgs):
     assert server_args.moe_dense_tp_size in [1, None]
     if not get_moe_a2a_backend().is_none() or server_args.moe_dense_tp_size == 1:
         if server_args.enable_dp_attention:
-            if server_args.dp_size <= 1:
+            dp_size = max(server_args.dp_size, 1)
+            if dp_size <= 1:
                 return False
-            if server_args.dp_size >= server_args.tp_size:
+            if dp_size >= server_args.tp_size:
                 return False
             return True
         return True
