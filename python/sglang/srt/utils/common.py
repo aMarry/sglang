@@ -3091,7 +3091,9 @@ def require_attn_tp_gather(server_args: ServerArgs):
         if server_args.enable_dp_attention:
             if server_args.dp_size <= 1:
                 return False
-            return server_args.dp_size < server_args.tp_size
+            if server_args.dp_size >= server_args.tp_size:
+                return False
+            return True
         return True
     else:
         return False
