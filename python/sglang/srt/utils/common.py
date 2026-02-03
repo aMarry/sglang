@@ -3062,6 +3062,7 @@ def require_mlp_tp_gather(server_args: ServerArgs):
 
     if server_args.enable_dp_attention:
         if server_args.dp_size <= 1:
+            # For dp_size == 1 we still allow dp_attention; gathering not needed.
             return False
         if (
             server_args.moe_dense_tp_size is None
@@ -3091,6 +3092,7 @@ def require_attn_tp_gather(server_args: ServerArgs):
         if server_args.enable_dp_attention:
             dp_size = max(server_args.dp_size, 1)
             if dp_size <= 1:
+                # dp_attention allowed but no gather needed; DP=1 uses local kernel path or A2A is a no-op.
                 return False
             if dp_size >= server_args.tp_size:
                 return False

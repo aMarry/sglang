@@ -4983,10 +4983,6 @@ class ServerArgs:
             self.tp_size * self.pp_size
         ) % self.nnodes == 0, "tp_size must be divisible by number of nodes"
 
-        # DP attention is only meaningful when dp_size > 1; avoid toggling code paths unnecessarily.
-        if self.dp_size <= 1 and self.enable_dp_attention:
-            self.enable_dp_attention = False
-
         if self.pp_size > 1:
             assert (
                 self.disable_overlap_schedule
