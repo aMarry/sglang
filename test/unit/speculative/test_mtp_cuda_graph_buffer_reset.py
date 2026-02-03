@@ -15,6 +15,9 @@ from unittest.mock import MagicMock, Mock
 
 import torch
 
+# Test constants
+TEST_VOCAB_SIZE = 32000
+
 
 class TestMTPCudaGraphBufferReset(unittest.TestCase):
     """Test MTP CUDA graph buffer reset functionality."""
@@ -49,7 +52,6 @@ class TestMTPCudaGraphBufferReset(unittest.TestCase):
 
         # Create mock runners with per-runner buffers
         runners = []
-        vocab_size = 32000
         for i in range(num_runners):
             runner = SimpleNamespace()
             runner.hidden_states = torch.ones(
@@ -61,7 +63,7 @@ class TestMTPCudaGraphBufferReset(unittest.TestCase):
                 (3, max_bs * num_tokens_per_bs), dtype=torch.int64
             )
             runner.next_token_logits_buffer = torch.ones(
-                (max_bs * num_tokens_per_bs, vocab_size), dtype=torch.float32
+                (max_bs * num_tokens_per_bs, TEST_VOCAB_SIZE), dtype=torch.float32
             )
             runner.num_tokens_per_bs = num_tokens_per_bs
             runner.max_bs = max_bs
@@ -189,7 +191,6 @@ class TestMTPCudaGraphBufferReset(unittest.TestCase):
         max_bs = 2
         num_tokens_per_bs = 4
         hidden_size = 128
-        vocab_size = 32000
 
         # Create a single runner
         runner = SimpleNamespace()
@@ -202,7 +203,7 @@ class TestMTPCudaGraphBufferReset(unittest.TestCase):
             (3, max_bs * num_tokens_per_bs), dtype=torch.int64
         )
         runner.next_token_logits_buffer = torch.zeros(
-            (max_bs * num_tokens_per_bs, vocab_size), dtype=torch.float32
+            (max_bs * num_tokens_per_bs, TEST_VOCAB_SIZE), dtype=torch.float32
         )
         runner.num_tokens_per_bs = num_tokens_per_bs
         runner.max_bs = max_bs
