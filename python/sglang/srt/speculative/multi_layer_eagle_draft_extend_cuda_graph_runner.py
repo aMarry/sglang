@@ -667,6 +667,10 @@ class MultiLayerEagleMultiStepDraftExtendCudaGraphRunner:
                         device=runner.extend_start_loc.device,
                     )
                 )
+                # Reset output buffers to prevent stale data from previous iterations
+                # causing incorrect token generation (missing characters issue)
+                runner.mrope_positions.zero_()
+                runner.next_token_logits_buffer.zero_()
 
     def get_runner(self, step):
         return self.runners[step]
