@@ -3091,9 +3091,9 @@ def require_attn_tp_gather(server_args: ServerArgs):
     if not get_moe_a2a_backend().is_none() or server_args.moe_dense_tp_size == 1:
         if server_args.enable_dp_attention:
             dp_size = max(server_args.dp_size, 1)
+            # For tp-only (dp_size == 1) still use TP gather/A2A so that tp4+dp1 runs over NCCL.
             if dp_size <= 1:
-                # dp_attention allowed but no gather needed; DP=1 uses local kernel path or A2A is a no-op.
-                return False
+                return server_args.tp_size > 1
             if dp_size >= server_args.tp_size:
                 return False
             return True
