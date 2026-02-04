@@ -769,8 +769,15 @@ class CommunicateWithAllReduceAndLayerNormFn:
             )
 
         if residual_input_mode == ScatterMode.SCATTERED and context.attn_tp_size > 1:
+            # For cuda graph capture with attn_dp_size == 1, avoid reusing the global DP buffer
+            # because it may be aliased across captures. Use a fresh buffer to ensure correctness.
+            target_residual = (
+                get_local_dp_buffer()
+                if context.attn_dp_size != 1
+                else residual.new_empty_like(residual)
+            )
             residual, local_residual = (
-                get_local_dp_buffer(),
+                target_residual,
                 residual,
             )
             attn_tp_all_gather_into_tensor(residual, local_residual)
