@@ -806,6 +806,8 @@ class CommunicateWithAllReduceAndLayerNormFn:
                 if hidden_states.shape[0] != 0:
                     hidden_states = layernorm(hidden_states)
         else:
+            if residual_input_mode == ScatterMode.SCATTERED and context.attn_tp_size > 1:
+                hidden_states = hidden_states + residual
             if apply_flashinfer_allreduce_fusion(hidden_states.shape[0]) and hasattr(
                 layernorm, "forward_with_allreduce_fusion"
             ):
