@@ -3061,7 +3061,9 @@ def require_mlp_tp_gather(server_args: ServerArgs):
     from sglang.srt.layers.moe.utils import get_moe_a2a_backend
 
     if server_args.enable_dp_attention:
-        assert server_args.dp_size > 1, "dp_size must be greater than 1"
+        if server_args.dp_size <= 1:
+            # For dp_size == 1 we still allow dp_attention; gathering not needed.
+            return False
         if (
             server_args.moe_dense_tp_size is None
         ):  # TODO(ch-wan): some MoE models do not have dense layers
@@ -3088,9 +3090,15 @@ def require_attn_tp_gather(server_args: ServerArgs):
     assert server_args.moe_dense_tp_size in [1, None]
     if not get_moe_a2a_backend().is_none() or server_args.moe_dense_tp_size == 1:
         if server_args.enable_dp_attention:
-            return server_args.dp_size < server_args.tp_size
-        else:
+            dp_size = max(server_args.dp_size, 1)
+            # For tp-only (dp_size == 1) still use TP gather/A2A so that tp4+dp1 runs over NCCL.
+            if dp_size <= 1:
+                # Explicitly prefer NCCL backend when possible.
+                return server_args.tp_size > 1 and server_args.attention_backend != "flashinfer_kernel"
+            if dp_size >= server_args.tp_size:
+                return False
             return True
+        return True
     else:
         return False
 
