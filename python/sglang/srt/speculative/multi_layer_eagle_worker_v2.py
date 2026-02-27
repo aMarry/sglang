@@ -632,7 +632,18 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
 
         # Batch 1: Target verify
         # Prepare for target verify in a separate stream
+        # NOTE: prepare_for_v2_verify reads req_to_token (for out_cache_loc and
+        # page_table setup) which was just written by assign_req_to_token_pool_func
+        # on the default stream inside prepare_for_decode.  The forward stream
+        # already waited for the default stream, but the plan_stream is independent
+        # and has no ordering guarantee relative to the default stream.  Record the
+        # current (forward) stream and make the plan_stream wait for it so that the
+        # req_to_token writes are visible before the plan_stream reads them.
+        if self.plan_stream:
+            stream_before_plan = torch.get_device_module(self.device).current_stream()
         with self.plan_stream_ctx:
+            if self.plan_stream:
+                self.plan_stream.wait_stream(stream_before_plan)
             verify_forward_batch, can_run_cuda_graph = (
                 verify_input.prepare_for_v2_verify(
                     self.req_to_token_pool,
