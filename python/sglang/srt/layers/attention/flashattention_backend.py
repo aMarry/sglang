@@ -1931,7 +1931,7 @@ class FlashAttentionBackend(AttentionBackend):
                         // self.page_size
                     )
                     metadata.page_table[:, :max_seq_pages].copy_(page_table)
-                    # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
+                    metadata.page_table[:, max_seq_pages:].fill_(0)
                     metadata_expand = self.draft_decode_metadata_topk_expand[bs]
                     decode_length = self.speculative_step_id + 1
                     # shape: [bs, num_steps, topk] -> [bs x topk, num_steps]
@@ -1939,6 +1939,7 @@ class FlashAttentionBackend(AttentionBackend):
                     if self.page_size > 1:
                         draft_decode_set_expand_metadata(
                             cache_seqlens_int32=metadata_expand.cache_seqlens_int32,
+                            cu_seqlens_k=metadata_expand.cu_seqlens_k,
                             page_table=metadata_expand.page_table,
                             last_page_lens=last_page_lens,
                             decode_length=decode_length,
@@ -2000,6 +2001,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                metadata.page_table[:, max_seq_pages:].fill_(0)
             else:
                 # When topk > 1, we need two specific target verify metadata, and then merge states
                 # 1. The first half of metadata for prefix tokens
@@ -2020,6 +2022,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                metadata.page_table[:, max_seq_pages:].fill_(0)
 
                 # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
                 metadata_expand = self.target_verify_metadata_topk_expand[bs]
@@ -2114,6 +2117,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            metadata.page_table[:, max_seq_pages:].fill_(0)
 
         elif forward_mode.is_draft_extend_v2():
             metadata = self.draft_extend_metadata[bs]
@@ -2162,6 +2166,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            metadata.page_table[:, max_seq_pages:].fill_(0)
 
         if encoder_lens is not None:
             # Only support encoder size 1 for now
@@ -2619,16 +2624,19 @@ def normal_decode_set_metadata(
         strided_indices[:max_seq_pages][None, :],
     ]
     page_table[:, :max_seq_pages].copy_(page_indices // page_size)
+    page_table[:, max_seq_pages:].fill_(0)
 
     if swa_page_table is not None and token_to_kv_pool is not None:
         assert isinstance(token_to_kv_pool, SWAKVPool)
         swa_page_indices = token_to_kv_pool.translate_loc_from_full_to_swa(page_indices)
         swa_page_table[:, :max_seq_pages].copy_(swa_page_indices // page_size)
+        swa_page_table[:, max_seq_pages:].fill_(0)
 
 
 @torch.compile(dynamic=True, backend=get_compiler_backend())
 def draft_decode_set_expand_metadata(
     cache_seqlens_int32: torch.Tensor,  # Modifies
+    cu_seqlens_k: torch.Tensor,  # Modifies
     page_table: torch.Tensor,  # Modifies
     last_page_lens: torch.Tensor,
     decode_length: int,
@@ -2638,6 +2646,12 @@ def draft_decode_set_expand_metadata(
 ):
     expanded_last_page_lens = last_page_lens.repeat_interleave(topk)
     cache_seqlens_int32.copy_(decode_length + expanded_last_page_lens)
+    # Keep cu_seqlens_k consistent with cache_seqlens_int32 so the attention
+    # kernel sees the correct per-sequence KV lengths (especially when
+    # page_size > 1 and last_page_lens > 0).
+    cu_seqlens_k[1:].copy_(
+        torch.cumsum(cache_seqlens_int32, dim=0, dtype=torch.int32)
+    )
     cache_loc = (cache_loc // page_size).to(torch.int32)
     if cache_loc.dim() == 1:
         cache_loc = cache_loc.unsqueeze(0)
@@ -2646,4 +2660,9 @@ def draft_decode_set_expand_metadata(
     mask[:, 1:] = cache_loc[:, 1:] != cache_loc[:, :-1]
     positions = mask.cumsum(dim=1) - 1
     num_seqs = cache_loc.shape[0]
+    # Zero out first to clear any stale entries from previous iterations before
+    # writing new page indices.  Without this, positions that were written in a
+    # prior replay but are no longer needed (because last_page_lens changed)
+    # retain stale page indices that can be read by the attention kernel.
+    page_table[:num_seqs, :].zero_()
     page_table[:num_seqs, :].scatter_(1, positions, cache_loc)
