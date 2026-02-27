@@ -375,6 +375,9 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
         topk_p_list = []
         topk_index_list = []
         for step in range(self.speculative_num_steps):
+            # Each MTP layer has its own KV pool; update forward_batch so that
+            # set_kv_buffer / get_kv_buffer access the correct buffer for this step.
+            forward_batch.token_to_kv_pool = self.draft_runner_list[step].token_to_kv_pool
             output: ModelRunnerOutput = self.draft_runner_list[step].forward(
                 forward_batch
             )
@@ -466,6 +469,11 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
                     draft_logits_output.topk_index,
                 )
             else:
+                # Each MTP layer has its own KV pool; update forward_batch so that
+                # set_kv_buffer / get_kv_buffer access the correct buffer for this step.
+                forward_batch.token_to_kv_pool = self.draft_runner_list[
+                    step
+                ].token_to_kv_pool
                 draft_logits_output, _ = self.draft_runner_list[step].forward(
                     forward_batch, skip_attn_backend_init=True
                 )
