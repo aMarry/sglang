@@ -1896,6 +1896,7 @@ class FlashAttentionBackend(AttentionBackend):
                 tail = table[:, used_cols:]
                 if logger.isEnabledFor(logging.DEBUG) and LOG_FA3_TAIL_DEBUG:
                     # Guarding the block avoids evaluating the expensive count when DEBUG logging is off (logging arguments are eager).
+                    # The env flag is a module-level constant; keeping it in the check keeps this debug path explicitly opt-in.
                     # Debug-only diagnostic (requires DEBUG logging and SGLANG_FA3_DEBUG_TAIL=1) to catch stale page indices during CUDA graph replay.
                     # This performs a full tail scan and blocks the CUDA stream via `.item()`, so keep it enabled only briefly while collecting FA3 tail evidence.
                     nonzero_count = tail.count_nonzero().item()
