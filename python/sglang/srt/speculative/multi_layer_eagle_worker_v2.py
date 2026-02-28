@@ -75,6 +75,17 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
         nccl_port: int,
         target_worker: TpModelWorker,
     ):
+        logger.info(
+            "Initializing MultiLayerEagleDraftWorker (v2): "
+            "gpu_id=%d, tp_rank=%d, speculative_algorithm=%s, "
+            "topk=%s, num_steps=%s, num_draft_tokens=%s",
+            gpu_id,
+            tp_rank,
+            server_args.speculative_algorithm,
+            server_args.speculative_eagle_topk,
+            server_args.speculative_num_steps,
+            server_args.speculative_num_draft_tokens,
+        )
         # copy args
         self.server_args = server_args
         self.gpu_id = gpu_id
@@ -183,6 +194,14 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
                 FlashAttentionBackend,
             )
 
+            logger.info(
+                "Creating FlashAttentionBackend for draft step %d/%d "
+                "(model_runner=%s, speculative_step_id=%d)",
+                step,
+                self.speculative_num_steps,
+                type(self.draft_runner_list[step]).__name__,
+                step,
+            )
             self.draft_extend_attn_backend_list.append(
                 FlashAttentionBackend(
                     model_runner=self.draft_runner_list[step],
@@ -200,8 +219,14 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
         self.cuda_graph_runner_for_draft_extend = None
 
         if self.server_args.disable_cuda_graph:
+            logger.info(
+                "CUDA graphs disabled for MultiLayerEagleDraftWorker (v2)"
+            )
             return
 
+        logger.info(
+            "Capturing CUDA graphs for MultiLayerEagleDraftWorker (v2) draft extend"
+        )
         self.cuda_graph_runner_for_draft_extend = (
             MultiLayerEagleMultiStepDraftExtendCudaGraphRunner(self)
         )
@@ -213,6 +238,12 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
             )
 
     def draft(self, model_worker_batch: ModelWorkerBatch):
+        logger.debug(
+            "MultiLayerEagleDraftWorker.draft() called: "
+            "forward_mode=%s, batch_size=%d",
+            model_worker_batch.forward_mode,
+            len(model_worker_batch.seq_lens),
+        )
         draft_input: EagleDraftInput = model_worker_batch.spec_info
         forward_batch, can_cuda_graph = draft_input.prepare_for_v2_draft(
             self.req_to_token_pool,
@@ -355,6 +386,13 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
             target_hidden_states: Hidden states from the target model forward
             next_token_ids: Next token ids generated from the target forward.
         """
+        logger.debug(
+            "MultiLayerEagleDraftWorker._draft_extend_for_prefill() called: "
+            "batch_size=%d, hidden_states_shape=%s, num_steps=%d",
+            len(batch.seq_lens),
+            target_hidden_states.shape,
+            self.speculative_num_steps,
+        )
         # Construct spec_info
         next_draft_input = EagleDraftInput(
             hidden_states=target_hidden_states,
@@ -416,6 +454,12 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
     def _draft_extend_for_decode(
         self, batch: ModelWorkerBatch, batch_result: GenerationBatchResult
     ):
+        logger.debug(
+            "MultiLayerEagleDraftWorker._draft_extend_for_decode() called: "
+            "batch_size=%d, num_steps=%d",
+            len(batch.seq_lens),
+            self.speculative_num_steps,
+        )
         # Batch 2: Draft extend
         draft_input = EagleDraftInput(
             hidden_states=batch_result.logits_output.hidden_states,
@@ -443,6 +487,13 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
         can_cuda_graph = (
             self.cuda_graph_runner_for_draft_extend
             and self.cuda_graph_runner_for_draft_extend.can_run(forward_batch)
+        )
+        logger.debug(
+            "_draft_extend_for_decode: can_cuda_graph=%s, "
+            "cuda_graph_runner_exists=%s, batch_size=%d",
+            can_cuda_graph,
+            self.cuda_graph_runner_for_draft_extend is not None,
+            forward_batch.batch_size,
         )
         ret_topk_p_list = []
         ret_topk_index_list = []
@@ -545,6 +596,19 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
         nccl_port: int,
         target_worker: TpModelWorker,
     ):
+        logger.info(
+            "Initializing MultiLayerEagleWorkerV2: "
+            "gpu_id=%d, tp_rank=%d, algorithm=%s, "
+            "topk=%s, num_steps=%s, num_draft_tokens=%s, "
+            "disable_overlap_schedule=%s",
+            gpu_id,
+            tp_rank,
+            server_args.speculative_algorithm,
+            server_args.speculative_eagle_topk,
+            server_args.speculative_num_steps,
+            server_args.speculative_num_draft_tokens,
+            server_args.disable_overlap_schedule,
+        )
         # Parse arguments
         self.server_args = server_args
         self.topk = server_args.speculative_eagle_topk
@@ -603,6 +667,12 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
             model_worker_batch.forward_mode.is_extend()
             or model_worker_batch.is_extend_in_batch
         ):
+            logger.debug(
+                "MultiLayerEagleWorkerV2.forward_batch_generation: PREFILL path, "
+                "forward_mode=%s, batch_size=%d",
+                model_worker_batch.forward_mode,
+                len(model_worker_batch.seq_lens),
+            )
             # Target prefill
             model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
             batch_output = self.target_worker.forward_batch_generation(
@@ -618,6 +688,15 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
             )
             return batch_output
         else:
+            logger.debug(
+                "MultiLayerEagleWorkerV2.forward_batch_generation: DECODE path, "
+                "forward_mode=%s, batch_size=%d, spec_info=%s",
+                model_worker_batch.forward_mode,
+                len(model_worker_batch.seq_lens),
+                type(model_worker_batch.spec_info).__name__
+                if model_worker_batch.spec_info is not None
+                else "None",
+            )
             if model_worker_batch.spec_info is None:
                 model_worker_batch.spec_info = EagleDraftInput.create_idle_input(
                     device=self.device,
@@ -638,6 +717,10 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
         self,
         batch: ModelWorkerBatch,
     ):
+        logger.debug(
+            "MultiLayerEagleWorkerV2.verify() called: batch_size=%d",
+            len(batch.seq_lens),
+        )
         # Since batch.seq_lens is allocated in another stream, we need
         # record_stream() to prevent pytorch gc and reuse the gpu memory
         # while forward_stream is still running.
@@ -695,6 +778,12 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
             accept_index,
         ) = verify_input.sample(batch, logits_output)
         new_seq_lens = batch.seq_lens + accept_length
+        logger.debug(
+            "MultiLayerEagleWorkerV2.verify() result: "
+            "mean_accept_length=%.2f, can_run_cuda_graph=%s",
+            accept_length.float().mean().item(),
+            can_run_cuda_graph,
+        )
         verify_done = torch.get_device_module(self.device).Event()
         verify_done.record()
 
