@@ -2552,7 +2552,7 @@ class ServerArgs:
             and self.dp_size == 1
         ):
             logger.warning(
-                "Detected known unstable SpecV2(EAGLE topk=1) decode tuple with fa3, tp_size=4, dp_size=1, page_size=1. Keeping user-specified fa3 backend and CUDA graph as requested."
+                "Detected known unstable SpecV2(EAGLE topk=1) decode tuple with fa3, tp_size=4, dp_size=1, page_size=1. Keeping fa3 decode path and CUDA graph unchanged."
             )
 
     def _handle_load_format(self):
