@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from enum import Enum, IntEnum, auto
 from typing import TYPE_CHECKING, List, Optional, Tuple, Type, Union
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
     from sglang.srt.server_args import ServerArgs
     from sglang.srt.speculative.base_spec_worker import BaseSpecWorker
     from sglang.srt.speculative.ngram_worker import NGRAMWorker
+
+logger = logging.getLogger(__name__)
 
 
 class SpeculativeAlgorithm(Enum):
@@ -57,6 +60,14 @@ class SpeculativeAlgorithm(Enum):
         ), "Cannot create worker for NONE speculative algorithm."
 
         enable_overlap = not server_args.disable_overlap_schedule
+        logger.info(
+            "Creating speculative worker: algorithm=%s, is_eagle=%s, "
+            "enable_multi_layer_eagle=%s, enable_overlap=%s",
+            self.name,
+            self.is_eagle(),
+            server_args.enable_multi_layer_eagle,
+            enable_overlap,
+        )
         if self.is_eagle() and server_args.enable_multi_layer_eagle:
             # FIXME: migrate to EagleWorker
             if enable_overlap:
@@ -64,22 +75,26 @@ class SpeculativeAlgorithm(Enum):
                     MultiLayerEagleWorkerV2,
                 )
 
+                logger.info("Selected worker: MultiLayerEagleWorkerV2")
                 return MultiLayerEagleWorkerV2
 
             from sglang.srt.speculative.multi_layer_eagle_worker import (
                 MultiLayerEagleWorker,
             )
 
+            logger.info("Selected worker: MultiLayerEagleWorker (v1)")
             return MultiLayerEagleWorker
 
         elif self.is_eagle():
             if enable_overlap:
                 from sglang.srt.speculative.eagle_worker_v2 import EAGLEWorkerV2
 
+                logger.info("Selected worker: EAGLEWorkerV2")
                 return EAGLEWorkerV2
 
             from sglang.srt.speculative.eagle_worker import EAGLEWorker
 
+            logger.info("Selected worker: EAGLEWorker (v1)")
             return EAGLEWorker
         elif self.is_standalone():
             if enable_overlap:

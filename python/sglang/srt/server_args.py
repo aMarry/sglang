@@ -1424,7 +1424,7 @@ class ServerArgs:
                 ), "Triton kernel MoE is only supported when ep_size == 1"
 
         elif "MiMoV2FlashForCausalLM" in model_arch:
-            if self.speculative_algorithm == "EAGLE":
+            if self.speculative_algorithm in ("EAGLE", "NEXTN"):
                 self.enable_multi_layer_eagle = True
                 logger.info(
                     "Enable multi-layer EAGLE speculative decoding for MiMoV2FlashForCausalLM model."
@@ -1445,7 +1445,7 @@ class ServerArgs:
                     "Disable hybrid SWA memory for MiMoV2FlashForCausalLM model with hierarchical cache"
                 )
         elif "Step3p5ForCausalLM" in model_arch:
-            if self.speculative_algorithm == "EAGLE":
+            if self.speculative_algorithm in ("EAGLE", "NEXTN"):
                 self.enable_multi_layer_eagle = True
                 logger.info(
                     "Enable multi-layer EAGLE speculative decoding for Step3p5ForCausalLM model."

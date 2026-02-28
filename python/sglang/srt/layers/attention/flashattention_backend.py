@@ -386,14 +386,14 @@ class FlashAttentionBackend(AttentionBackend):
         # If num_splits == 0, we use a heuristic to automatically determine the number of splits.
         # We set nums splits to 1 if deterministic inference is enabled.
         # See https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/ for more details.
-        # Furthermore, FA4 does not support num_splits=0 with CUDA Graph, so we set num_splits to 1 if CUDA Graph is enabled.
+        # When CUDA Graph is enabled, we force num_splits to 1 for both FA3 and FA4:
+        # - FA4 does not support num_splits=0 with CUDA Graph.
+        # - FA3 needs num_splits=1 to avoid non-determinism from the auto-split
+        #   heuristic, which is amplified by multi-step speculative decoding.
         self.num_splits = (
             1
             if model_runner.server_args.enable_deterministic_inference
-            or (
-                self.fa_impl_ver == 4
-                and not model_runner.server_args.disable_cuda_graph
-            )
+            or not model_runner.server_args.disable_cuda_graph
             else 0
         )
 
@@ -1653,17 +1653,23 @@ class FlashAttentionBackend(AttentionBackend):
                     metadata.cache_seqlens_int32 = self.decode_cuda_graph_metadata[
                         "cache_seqlens"
                     ][:bs]
+                    metadata.cache_seqlens_int32.copy_(
+                        seq_lens + (self.speculative_step_id + 1)
+                    )
                     metadata.max_seq_len_k = seq_lens.max().item() + (
                         self.speculative_step_id + 1
                     )
                     metadata.cu_seqlens_q = self.decode_cuda_graph_metadata[
                         "cu_seqlens_q"
                     ][: bs + 1]
-                    metadata.cu_seqlens_k = torch.nn.functional.pad(
+                    metadata.cu_seqlens_k = self.decode_cuda_graph_metadata[
+                        "cu_seqlens_k"
+                    ][: bs + 1]
+                    metadata.cu_seqlens_k[0] = 0
+                    metadata.cu_seqlens_k[1:].copy_(
                         torch.cumsum(
                             metadata.cache_seqlens_int32, dim=0, dtype=torch.int32
-                        ),
-                        (1, 0),
+                        )
                     )
                     metadata.page_table = self.decode_cuda_graph_metadata[
                         "page_table_draft_decode"
