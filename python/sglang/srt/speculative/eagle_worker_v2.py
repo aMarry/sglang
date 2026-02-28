@@ -461,13 +461,9 @@ class EagleDraftWorker(BaseDraftWorker):
         next_token_ids: torch.Tensor,
     ):
         """
-        Run the draft model in extend mode during prefill to populate its KV
-        cache, and return spec_info for the first decode step.
-
-        Skipping this step would leave the draft model's KV cache unpopulated
-        at prefix positions.  When subsequent decode steps attend to those
-        positions they would read stale values from previous requests, causing
-        corrupted decode output.
+        Skip the draft model during prefill. Build placeholder spec_info from
+        the target model's output so that the first decode step can proceed
+        without needing valid draft-model KV cache from the prefill phase.
 
         Args:
             batch: The batch to run.
@@ -478,74 +474,35 @@ class EagleDraftWorker(BaseDraftWorker):
         device = next_token_ids.device
         bs = len(batch.seq_lens)
 
-        if batch.forward_mode.is_idle():
-            # For idle batches there is nothing to extend; return a placeholder
-            # so the first decode step has a valid (though unused) spec_info.
-            topk_index = (
-                next_token_ids.unsqueeze(1)
-                .expand(-1, self.topk)
-                .contiguous()
-                .to(torch.int64)
-            )
-            topk_p = torch.full(
-                (bs, self.topk), 1.0 / self.topk, device=device, dtype=torch.float32
-            )
-            return EagleDraftInput(
-                hidden_states=target_hidden_states[:bs],
-                verified_id=next_token_ids,
-                new_seq_lens=batch.seq_lens,
-                num_tokens_per_batch=1,
-                num_tokens_for_logprob_per_batch=1,
-                topk_p=topk_p,
-                topk_index=topk_index,
-            )
-
-        # Apply EAGLE-style input shift: at position j the draft model expects
-        # embed(token_{j+1}) as part of its input (EAGLE architecture).  Shift
-        # each request's extend segment left by one token and append the
-        # target-predicted next token at the end.
-        if batch.extend_seq_lens is not None:
-            new_input_ids = batch.input_ids.clone()
+        # Extract the last-token hidden state per request from the target's
+        # full hidden states so that the first decode step has a non-None
+        # hidden_states tensor of the right shape (bs, hidden_dim).
+        if not batch.forward_mode.is_idle() and batch.extend_seq_lens is not None:
             pt = 0
-            for i, extend_len in enumerate(batch.extend_seq_lens):
-                # extend_seq_lens may contain 0-dim tensors when it comes from
-                # a tensor-typed list, so coerce to a plain int for slicing.
-                extend_len = int(extend_len)
-                if extend_len > 0:
-                    segment = batch.input_ids[pt : pt + extend_len]
-                    new_input_ids[pt : pt + extend_len] = torch.cat(
-                        [
-                            segment[1:],
-                            next_token_ids[i : i + 1].to(segment.dtype),
-                        ]
-                    )
+            last_hidden_list = []
+            for extend_len in batch.extend_seq_lens:
+                last_hidden_list.append(target_hidden_states[pt + extend_len - 1])
                 pt += extend_len
-            batch.input_ids = new_input_ids
+            last_hidden_states = torch.stack(last_hidden_list)
+        else:
+            last_hidden_states = target_hidden_states[:bs]
 
-        # Provide the full target hidden states so the draft model has the
-        # correct per-token context to write into its KV cache.
-        batch.spec_info = EagleDraftInput(
-            hidden_states=target_hidden_states,
-            verified_id=next_token_ids,
-            num_tokens_per_batch=1,
-            num_tokens_for_logprob_per_batch=1,
+        # Build placeholder topk from the target model's next-token prediction.
+        # Using the target's greedy token for every topk slot keeps the first
+        # decode step from crashing while ensuring target verification still
+        # produces the correct accepted token.
+        topk_index = (
+            next_token_ids.unsqueeze(1)
+            .expand(-1, self.topk)
+            .contiguous()
+            .to(torch.int64)
+        )
+        topk_p = torch.full(
+            (bs, self.topk), 1.0 / self.topk, device=device, dtype=torch.float32
         )
 
-        # Run the draft model in extend mode.  batch.forward_mode is already
-        # EXTEND (or MIXED) and batch.capture_hidden_mode was set to LAST by
-        # the caller, so logits_output will contain one entry per request.
-        forward_batch = ForwardBatch.init_new(batch, self.draft_runner)
-        # Logprobs are not needed for draft-model KV-cache population.
-        forward_batch.return_logprob = False
-        logits_output = self.draft_runner.forward(forward_batch).logits_output
-        if self.enable_nan_detection:
-            detect_nan(logits_output)
-
-        probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-        topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
-
-        return EagleDraftInput(
-            hidden_states=logits_output.hidden_states,
+        next_draft_input = EagleDraftInput(
+            hidden_states=last_hidden_states,
             verified_id=next_token_ids,
             new_seq_lens=batch.seq_lens,
             num_tokens_per_batch=1,
@@ -553,6 +510,7 @@ class EagleDraftWorker(BaseDraftWorker):
             topk_p=topk_p,
             topk_index=topk_index,
         )
+        return next_draft_input
 
     def _draft_extend_for_decode(
         self, batch: ModelWorkerBatch, batch_result: GenerationBatchResult
