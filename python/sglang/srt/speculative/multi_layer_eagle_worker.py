@@ -194,6 +194,27 @@ class MultiLayerEagleWorker(TpModelWorker):
             (), dtype=torch.int64, device=self.device
         )
         self.extend_lens = torch.empty((), dtype=torch.int64, device=self.device)
+        self.tp_rank = tp_rank
+        self._init_draft_tp_sync()
+
+    def _init_draft_tp_sync(self):
+        """Initialize TP sync for draft token selection."""
+        self.draft_tp_group = None
+        self.draft_tp_src_rank = 0
+        if self.tp_size > 1:
+            self.draft_tp_group = get_tp_group().device_group
+            ranks = torch.distributed.get_process_group_ranks(self.draft_tp_group)
+            self.draft_tp_src_rank = ranks[0]
+
+    def _sync_draft_topk(self, topk_p, topk_index):
+        """Sync draft topk selections across TP ranks via broadcast from rank 0."""
+        if self.draft_tp_group is not None:
+            torch.distributed.broadcast(
+                topk_index, src=self.draft_tp_src_rank, group=self.draft_tp_group
+            )
+            torch.distributed.broadcast(
+                topk_p, src=self.draft_tp_src_rank, group=self.draft_tp_group
+            )
 
     def init_attention_backend(self):
         # Create multi-step attn backends and cuda graph runners
@@ -627,6 +648,7 @@ class MultiLayerEagleWorker(TpModelWorker):
                 detect_nan(logits_output)
             probs = torch.softmax(logits_output.next_token_logits, dim=-1)
             topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
+            self._sync_draft_topk(topk_p, topk_index)
             topk_p_list.append(topk_p)
             topk_index_list.append(topk_index)
             pt = 0
@@ -722,6 +744,7 @@ class MultiLayerEagleWorker(TpModelWorker):
                 detect_nan(logits_output)
             probs = torch.softmax(logits_output.next_token_logits, dim=-1)
             topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
+            self._sync_draft_topk(topk_p, topk_index)
             topk_p_list.append(topk_p)
             topk_index_list.append(topk_index)
             pt = 0
