@@ -386,9 +386,10 @@ class FlashAttentionBackend(AttentionBackend):
         # If num_splits == 0, we use a heuristic to automatically determine the number of splits.
         # We set nums splits to 1 if deterministic inference is enabled.
         # See https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/ for more details.
-        # Furthermore, FA4 does not support num_splits=0 with CUDA Graph, so we set num_splits to 1 if CUDA Graph is enabled.
-        # FA3 also needs num_splits=1 with CUDA Graph to avoid non-determinism
-        # from the auto-split heuristic, which is amplified by multi-step speculative decoding.
+        # When CUDA Graph is enabled, we force num_splits to 1 for both FA3 and FA4:
+        # - FA4 does not support num_splits=0 with CUDA Graph.
+        # - FA3 needs num_splits=1 to avoid non-determinism from the auto-split
+        #   heuristic, which is amplified by multi-step speculative decoding.
         self.num_splits = (
             1
             if model_runner.server_args.enable_deterministic_inference
