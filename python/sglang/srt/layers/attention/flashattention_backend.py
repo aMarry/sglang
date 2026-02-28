@@ -2627,11 +2627,15 @@ def normal_decode_set_metadata(
         strided_indices[:max_seq_pages][None, :],
     ]
     page_table[:, :max_seq_pages].copy_(page_indices // page_size)
+    if page_table.shape[1] > max_seq_pages:
+        page_table[:, max_seq_pages:].zero_()
 
     if swa_page_table is not None and token_to_kv_pool is not None:
         assert isinstance(token_to_kv_pool, SWAKVPool)
         swa_page_indices = token_to_kv_pool.translate_loc_from_full_to_swa(page_indices)
         swa_page_table[:, :max_seq_pages].copy_(swa_page_indices // page_size)
+        if swa_page_table.shape[1] > max_seq_pages:
+            swa_page_table[:, max_seq_pages:].zero_()
 
 
 @torch.compile(dynamic=True, backend=get_compiler_backend())
