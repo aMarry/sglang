@@ -527,6 +527,7 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
         moe_ep_rank: int,
         nccl_port: int,
         target_worker: TpModelWorker,
+        **kwargs,
     ):
         # Parse arguments
         self.server_args = server_args
