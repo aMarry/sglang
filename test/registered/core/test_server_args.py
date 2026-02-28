@@ -266,5 +266,50 @@ class TestPortArgs(unittest.TestCase):
         self.assertIn("expected ':' after ']'", str(context.exception))
 
 
+class TestMultiLayerEagleWithNextN(unittest.TestCase):
+    """Test that NEXTN algorithm correctly enables multi-layer eagle for supported models."""
+
+    def _create_server_args_with_arch(self, model_arch, speculative_algorithm):
+        """Helper to create a ServerArgs and run model-specific adjustments."""
+        server_args = ServerArgs(model_path="dummy")
+        server_args.speculative_algorithm = speculative_algorithm
+        server_args.enable_multi_layer_eagle = False
+
+        # Mock the model config to return our desired architecture
+        mock_hf_config = MagicMock()
+        mock_hf_config.architectures = [model_arch]
+        mock_model_config = MagicMock()
+        mock_model_config.hf_config = mock_hf_config
+
+        with patch.object(server_args, "get_model_config", return_value=mock_model_config):
+            with patch(
+                "sglang.srt.server_args.parse_connector_type",
+                return_value=MagicMock(__eq__=lambda self, other: False),
+            ):
+                server_args._handle_model_specific_adjustments()
+
+        return server_args
+
+    def test_mimo_v2_with_eagle(self):
+        args = self._create_server_args_with_arch("MiMoV2FlashForCausalLM", "EAGLE")
+        self.assertTrue(args.enable_multi_layer_eagle)
+
+    def test_mimo_v2_with_nextn(self):
+        args = self._create_server_args_with_arch("MiMoV2FlashForCausalLM", "NEXTN")
+        self.assertTrue(args.enable_multi_layer_eagle)
+
+    def test_step3p5_with_eagle(self):
+        args = self._create_server_args_with_arch("Step3p5ForCausalLM", "EAGLE")
+        self.assertTrue(args.enable_multi_layer_eagle)
+
+    def test_step3p5_with_nextn(self):
+        args = self._create_server_args_with_arch("Step3p5ForCausalLM", "NEXTN")
+        self.assertTrue(args.enable_multi_layer_eagle)
+
+    def test_unrelated_model_not_affected(self):
+        args = self._create_server_args_with_arch("LlamaForCausalLM", "NEXTN")
+        self.assertFalse(args.enable_multi_layer_eagle)
+
+
 if __name__ == "__main__":
     unittest.main()
