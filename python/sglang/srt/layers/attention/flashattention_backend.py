@@ -1894,7 +1894,7 @@ class FlashAttentionBackend(AttentionBackend):
                 if logger.isEnabledFor(logging.DEBUG):
                     tail = table[:, used_cols:]
                     if tail.numel() > 0:
-                        has_nonzero = tail.abs().max().item() != 0
+                        has_nonzero = tail.any().item()
                         if has_nonzero:
                             logger.debug(
                                 "fa3 cuda graph page_table tail reset "
