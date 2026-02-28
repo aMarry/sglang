@@ -1893,15 +1893,16 @@ class FlashAttentionBackend(AttentionBackend):
             if table is not None and table.shape[1] > used_cols:
                 if logger.isEnabledFor(logging.DEBUG):
                     tail = table[:, used_cols:]
-                    if tail.numel() > 0:
-                        has_nonzero = tail.any().item()
-                        if has_nonzero:
-                            logger.debug(
-                                "fa3 cuda graph page_table tail reset "
-                                "(used_cols=%d total_cols=%d)",
-                                used_cols,
-                                table.shape[1],
-                            )
+                    nonzero_count = (
+                        tail.count_nonzero().item() if tail.numel() > 0 else 0
+                    )
+                    logger.debug(
+                        "fa3 cuda graph page_table tail reset "
+                        "(used_cols=%d total_cols=%d nonzero_tail=%d)",
+                        used_cols,
+                        table.shape[1],
+                        nonzero_count,
+                    )
                 table[:, used_cols:].zero_()
 
         if forward_mode.is_decode_or_idle():
