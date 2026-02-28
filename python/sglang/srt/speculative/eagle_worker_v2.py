@@ -461,45 +461,55 @@ class EagleDraftWorker(BaseDraftWorker):
         next_token_ids: torch.Tensor,
     ):
         """
-        Run draft model extend to correctly fill the KV cache.
+        Skip the draft model during prefill. Build placeholder spec_info from
+        the target model's output so that the first decode step can proceed
+        without needing valid draft-model KV cache from the prefill phase.
 
         Args:
             batch: The batch to run.
             target_hidden_states: Hidden states from the target model forward
+                (captured in FULL mode, shape [total_tokens, hidden_dim]).
             next_token_ids: Next token ids generated from the target forward.
         """
-        # Construct input_ids
-        if not batch.forward_mode.is_idle():
-            pt = 0
-            for i, extend_len in enumerate(batch.extend_seq_lens):
-                input_ids = batch.input_ids[pt : pt + extend_len]
-                batch.input_ids[pt : pt + extend_len] = torch.cat(
-                    (input_ids[1:], next_token_ids[i].reshape(1))
-                )
-                pt += extend_len
+        device = next_token_ids.device
+        bs = len(batch.seq_lens)
 
-        # Construct spec_info
+        # Extract the last-token hidden state per request from the target's
+        # full hidden states so that the first decode step has a non-None
+        # hidden_states tensor of the right shape (bs, hidden_dim).
+        if not batch.forward_mode.is_idle() and batch.extend_seq_lens is not None:
+            pt = 0
+            last_hidden_list = []
+            for extend_len in batch.extend_seq_lens:
+                last_hidden_list.append(target_hidden_states[pt + extend_len - 1])
+                pt += extend_len
+            last_hidden_states = torch.stack(last_hidden_list)
+        else:
+            last_hidden_states = target_hidden_states[:bs]
+
+        # Build placeholder topk from the target model's next-token prediction.
+        # Using the target's greedy token for every topk slot keeps the first
+        # decode step from crashing while ensuring target verification still
+        # produces the correct accepted token.
+        topk_index = (
+            next_token_ids.unsqueeze(1)
+            .expand(-1, self.topk)
+            .contiguous()
+            .to(torch.int64)
+        )
+        topk_p = torch.full(
+            (bs, self.topk), 1.0 / self.topk, device=device, dtype=torch.float32
+        )
+
         next_draft_input = EagleDraftInput(
-            hidden_states=target_hidden_states,
+            hidden_states=last_hidden_states,
             verified_id=next_token_ids,
             new_seq_lens=batch.seq_lens,
-            # draft mode is same with decode mode, only 1 num token per batch
             num_tokens_per_batch=1,
             num_tokens_for_logprob_per_batch=1,
+            topk_p=topk_p,
+            topk_index=topk_index,
         )
-
-        batch.spec_info = next_draft_input
-
-        # Run forward
-        forward_batch = ForwardBatch.init_new(batch, self.draft_runner)
-        logits_output = self.draft_runner.forward(forward_batch).logits_output
-
-        # Update spec_info for the next draft step
-        probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-        next_draft_input.topk_p, next_draft_input.topk_index = fast_topk(
-            probs, self.topk, dim=-1
-        )
-        next_draft_input.hidden_states = logits_output.hidden_states
         return next_draft_input
 
     def _draft_extend_for_decode(

@@ -340,72 +340,58 @@ class MultiLayerEagleDraftWorker(BaseDraftWorker):
         next_token_ids: torch.Tensor,
     ):
         """
-        Run draft model extend to correctly fill the KV cache.
+        Skip the draft model during prefill. Build placeholder spec_info from
+        the target model's output so that the first decode step can proceed
+        without needing valid draft-model KV cache from the prefill phase.
 
         Args:
             batch: The batch to run.
             target_hidden_states: Hidden states from the target model forward
+                (captured in FULL mode, shape [total_tokens, hidden_dim]).
             next_token_ids: Next token ids generated from the target forward.
         """
-        # Construct spec_info
-        next_draft_input = EagleDraftInput(
-            hidden_states=target_hidden_states,
-            verified_id=next_token_ids,
-            new_seq_lens=batch.seq_lens,
-            # draft mode is same with decode mode, only 1 num token per batch
-            num_tokens_per_batch=1,
-            num_tokens_for_logprob_per_batch=1,
+        device = next_token_ids.device
+        bs = len(batch.seq_lens)
+
+        # Extract the last-token hidden state per request from the target's
+        # full hidden states so that the first decode step has a non-None
+        # hidden_states tensor of the right shape (bs, hidden_dim).
+        if not batch.forward_mode.is_idle() and batch.extend_seq_lens is not None:
+            pt = 0
+            last_hidden_list = []
+            for extend_len in batch.extend_seq_lens:
+                last_hidden_list.append(target_hidden_states[pt + extend_len - 1])
+                pt += extend_len
+            last_hidden_states = torch.stack(last_hidden_list)
+        else:
+            last_hidden_states = target_hidden_states[:bs]
+
+        # Build placeholder topk_p and topk_index for all speculative steps.
+        # For multi-layer MTP the spec_info stores predictions for every step
+        # concatenated along dim-1: shape (bs, speculative_num_steps * topk).
+        # Use the target's greedy token for every slot so the first decode
+        # step doesn't crash while the target verifier still produces the
+        # correct accepted token.
+        total_topk = self.topk * self.speculative_num_steps
+        topk_index = (
+            next_token_ids.unsqueeze(1)
+            .expand(-1, total_topk)
+            .contiguous()
+            .to(torch.int64)
+        )
+        topk_p = torch.full(
+            (bs, total_topk), 1.0 / self.topk, device=device, dtype=torch.float32
         )
 
-        batch.spec_info = next_draft_input
-
-        # Run forward
-        forward_batch = ForwardBatch.init_new(batch, self.draft_runner_list[0])
-        forward_batch.return_hidden_states_before_norm = True
-
-        # Construct input_ids
-        if not batch.forward_mode.is_idle():
-            rotate_input_ids_triton(
-                forward_batch.input_ids,
-                forward_batch.extend_start_loc,
-                forward_batch.extend_seq_lens,
-                next_token_ids,
-            )
-
-        topk_p_list = []
-        topk_index_list = []
-        for step in range(self.speculative_num_steps):
-            # Each MTP layer has its own KV pool; update forward_batch so that
-            # set_kv_buffer / get_kv_buffer access the correct buffer for this step.
-            forward_batch.token_to_kv_pool = self.draft_runner_list[step].token_to_kv_pool
-            output: ModelRunnerOutput = self.draft_runner_list[step].forward(
-                forward_batch
-            )
-            probs = torch.softmax(output.logits_output.next_token_logits, dim=-1)
-            topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
-            topk_p_list.append(topk_p)
-            topk_index_list.append(topk_index)
-            if forward_batch.extend_seq_lens is not None:
-                rotate_input_ids_triton(
-                    forward_batch.input_ids,
-                    forward_batch.extend_start_loc,
-                    forward_batch.extend_seq_lens,
-                    topk_index,
-                )
-        next_draft_input.topk_p = torch.cat(topk_p_list, dim=1)
-        next_draft_input.topk_index = torch.cat(topk_index_list, dim=1)
-
-        # Update req_to_hidden_states_pool for KV Cache reversion
-        if forward_batch.extend_seq_lens is not None:
-            assign_hidden_states_pool_triton(
-                target_hidden_states,
-                forward_batch.req_pool_indices,
-                self.req_to_hidden_states_pool,
-                self.speculative_num_steps - 1,
-                forward_batch.batch_size,
-                forward_batch.extend_seq_lens,
-                forward_batch.extend_start_loc,
-            )
+        next_draft_input = EagleDraftInput(
+            hidden_states=last_hidden_states,
+            verified_id=next_token_ids,
+            new_seq_lens=batch.seq_lens,
+            num_tokens_per_batch=1,
+            num_tokens_for_logprob_per_batch=1,
+            topk_p=topk_p,
+            topk_index=topk_index,
+        )
         return next_draft_input
 
     def _draft_extend_for_decode(
