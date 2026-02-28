@@ -272,6 +272,13 @@ def initialize_dp_attention(
     moe_dense_tp_size = server_args.moe_dense_tp_size
     attn_cp_size = server_args.attn_cp_size
 
+    if enable_dp_attention and dp_size <= 1:
+        logger.warning(
+            "Ignoring --enable-dp-attention because dp_size=%d. DP attention requires dp_size > 1.",
+            dp_size,
+        )
+        enable_dp_attention = False
+
     _ENABLE_DP_ATTENTION_FLAG = enable_dp_attention
 
     tp_rank = get_tensor_model_parallel_rank()
