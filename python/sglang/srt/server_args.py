@@ -2542,7 +2542,8 @@ class ServerArgs:
     def _handle_fa3_spec_v2_cuda_graph_workaround(self):
         decode_backend = self.decode_attention_backend or self.attention_backend
         if (
-            envs.SGLANG_ENABLE_SPEC_V2.get()
+            not self.disable_cuda_graph
+            and envs.SGLANG_ENABLE_SPEC_V2.get()
             and self.speculative_algorithm == "EAGLE"
             and self.speculative_eagle_topk == 1
             and decode_backend == "fa3"
