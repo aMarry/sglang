@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+import logging
 import numpy as np
 import torch
 import triton
@@ -34,6 +35,8 @@ from sglang.jit_kernel.flash_attention_v4 import (
 from sglang.jit_kernel.flash_attention_v4 import (
     flash_attn_with_kvcache as flash_attn_with_kvcache_fa4,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -1888,6 +1891,17 @@ class FlashAttentionBackend(AttentionBackend):
 
         def zero_tail(table, used_cols):
             if table is not None and table.shape[1] > used_cols:
+                if logger.isEnabledFor(logging.DEBUG):
+                    tail = table[:, used_cols:]
+                    if tail.numel() > 0:
+                        has_nonzero = tail.abs().max().item() != 0
+                        if has_nonzero:
+                            logger.debug(
+                                "fa3 cuda graph page_table tail reset "
+                                "(used_cols=%d total_cols=%d)",
+                                used_cols,
+                                table.shape[1],
+                            )
                 table[:, used_cols:].zero_()
 
         if forward_mode.is_decode_or_idle():
