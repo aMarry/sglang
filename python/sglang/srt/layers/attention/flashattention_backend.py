@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import logging
+import os
 import numpy as np
 import torch
 import triton
@@ -37,6 +38,7 @@ from sglang.jit_kernel.flash_attention_v4 import (
 )
 
 logger = logging.getLogger(__name__)
+LOG_FA3_TAIL_DEBUG = os.getenv("SGLANG_FA3_DEBUG_TAIL") == "1"
 
 
 @dataclass
@@ -1892,9 +1894,9 @@ class FlashAttentionBackend(AttentionBackend):
         def zero_tail(table, used_cols):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
-                if logger.isEnabledFor(logging.DEBUG):
+                if LOG_FA3_TAIL_DEBUG and logger.isEnabledFor(logging.DEBUG):
                     # Debug-only diagnostic to catch stale page indices during CUDA graph replay.
-                    # This performs a full tail scan and syncs via `.item()`, so keep DEBUG logging enabled only for short repros.
+                    # This performs a full tail scan and syncs via `.item()`, so keep DEBUG logging enabled only for short reproductions.
                     nonzero_count = tail.count_nonzero().item()
                     logger.debug(
                         "FA3 cuda graph page_table tail reset "
