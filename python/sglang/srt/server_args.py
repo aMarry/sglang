@@ -2542,8 +2542,7 @@ class ServerArgs:
     def _handle_fa3_spec_v2_cuda_graph_workaround(self):
         decode_backend = self.decode_attention_backend or self.attention_backend
         if (
-            not self.disable_cuda_graph
-            and envs.SGLANG_ENABLE_SPEC_V2.get()
+            envs.SGLANG_ENABLE_SPEC_V2.get()
             and self.speculative_algorithm == "EAGLE"
             and self.speculative_eagle_topk == 1
             and decode_backend == "fa3"
@@ -2552,9 +2551,9 @@ class ServerArgs:
             and self.dp_size == 1
         ):
             logger.warning(
-                "Disabling CUDA graph for FA3 + SpecV2(EAGLE topk=1) with tp_size=4, dp_size=1, page_size=1 due to known decode instability."
+                "Switching decode attention backend from fa3 to triton for SpecV2(EAGLE topk=1) with tp_size=4, dp_size=1, page_size=1 due to known decode instability while keeping CUDA graph enabled."
             )
-            self.disable_cuda_graph = True
+            self.decode_attention_backend = "triton"
 
     def _handle_load_format(self):
         if (
