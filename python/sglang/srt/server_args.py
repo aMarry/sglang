@@ -2552,9 +2552,8 @@ class ServerArgs:
             and self.dp_size == 1
         ):
             logger.warning(
-                "Switching decode attention backend from fa3 to triton for SpecV2(EAGLE topk=1) with tp_size=4, dp_size=1, page_size=1 due to known decode instability while keeping CUDA graph enabled."
+                "Detected known unstable SpecV2(EAGLE topk=1) decode tuple with fa3, tp_size=4, dp_size=1, page_size=1. Keeping user-specified fa3 backend and CUDA graph as requested."
             )
-            self.decode_attention_backend = "triton"
 
     def _handle_load_format(self):
         if (
