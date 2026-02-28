@@ -1891,7 +1891,7 @@ class FlashAttentionBackend(AttentionBackend):
 
         def zero_tail(table, used_cols):
             if table is not None and table.shape[1] > used_cols:
-                if logger.isEnabledFor(logging.DEBUG) and logger.hasHandlers():
+                if logger.isEnabledFor(logging.DEBUG):
                     tail = table[:, used_cols:]
                     nonzero_count = (
                         tail.count_nonzero().item() if tail.numel() > 0 else 0
