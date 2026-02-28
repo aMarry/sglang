@@ -1893,8 +1893,8 @@ class FlashAttentionBackend(AttentionBackend):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
                 if logger.isEnabledFor(logging.DEBUG):
-                    # Debug-only diagnostic to catch stale page indices during CUDA graph replay;
-                    # cost is acceptable because this path runs only with DEBUG logging enabled.
+                    # Debug-only diagnostic to catch stale page indices during CUDA graph replay.
+                    # This performs a full tail scan, so keep DEBUG logging enabled only for short repros.
                     nonzero_count = tail.count_nonzero().item()
                     logger.debug(
                         "FA3 cuda graph page_table tail reset "
