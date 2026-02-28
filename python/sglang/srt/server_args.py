@@ -772,6 +772,7 @@ class ServerArgs:
 
         # Handle speculative decoding logic.
         self._handle_speculative_decoding()
+        self._handle_fa3_spec_v2_cuda_graph_workaround()
 
         # Handle model loading format.
         self._handle_load_format()
@@ -2537,6 +2538,23 @@ class ServerArgs:
                 raise ValueError(
                     "Currently ngram speculative decoding does not support dp attention."
                 )
+
+    def _handle_fa3_spec_v2_cuda_graph_workaround(self):
+        decode_backend = self.decode_attention_backend or self.attention_backend
+        if (
+            not self.disable_cuda_graph
+            and envs.SGLANG_ENABLE_SPEC_V2.get()
+            and self.speculative_algorithm == "EAGLE"
+            and self.speculative_eagle_topk == 1
+            and decode_backend == "fa3"
+            and self.page_size == 1
+            and self.tp_size == 4
+            and self.dp_size == 1
+        ):
+            logger.warning(
+                "Disabling CUDA graph for FA3 + SpecV2(EAGLE topk=1) with tp_size=4, dp_size=1, page_size=1 due to known decode instability."
+            )
+            self.disable_cuda_graph = True
 
     def _handle_load_format(self):
         if (
