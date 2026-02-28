@@ -186,6 +186,14 @@ class EAGLEWorker(TpModelWorker):
         self.draft_model_runner.server_args.disable_cuda_graph = (
             backup_disable_cuda_graph
         )
+        # The draft model runner's own attn_backend was created with
+        # disable_cuda_graph=True (temporarily set during init), so its
+        # num_splits defaults to 0 (non-deterministic auto-split for FA3).
+        # Fix it to match the actual setting now that disable_cuda_graph
+        # is restored.
+        if hasattr(self.draft_model_runner.attn_backend, "num_splits"):
+            if not backup_disable_cuda_graph or server_args.enable_deterministic_inference:
+                self.draft_model_runner.attn_backend.num_splits = 1
         self.draft_tp_context = (
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )

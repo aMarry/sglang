@@ -180,6 +180,10 @@ class MultiLayerEagleWorker(TpModelWorker):
             self.mtp_model_runner(i).server_args.disable_cuda_graph = (
                 backup_disable_cuda_graph
             )
+            # Fix num_splits for model runner attn_backend (see eagle_worker.py)
+            if hasattr(self.mtp_model_runner(i).attn_backend, "num_splits"):
+                if not backup_disable_cuda_graph or server_args.enable_deterministic_inference:
+                    self.mtp_model_runner(i).attn_backend.num_splits = 1
         self.draft_tp_context = (
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )
