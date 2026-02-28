@@ -1885,6 +1885,11 @@ class FlashAttentionBackend(AttentionBackend):
         device = seq_lens.device
         metadata = None
         metadata_expand = None
+        _zero_tail = (
+            lambda table, used_cols: table[:, used_cols:].zero_()
+            if table is not None and table.shape[1] > used_cols
+            else None
+        )
 
         if forward_mode.is_decode_or_idle():
 
@@ -1939,6 +1944,7 @@ class FlashAttentionBackend(AttentionBackend):
                         // self.page_size
                     )
                     metadata.page_table[:, :max_seq_pages].copy_(page_table)
+                    _zero_tail(metadata.page_table, max_seq_pages)
                     # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
                     metadata_expand = self.draft_decode_metadata_topk_expand[bs]
                     decode_length = self.speculative_step_id + 1
@@ -1959,6 +1965,7 @@ class FlashAttentionBackend(AttentionBackend):
                         metadata_expand.page_table[:num_seqs, :decode_length].copy_(
                             cache_loc[:, :decode_length]
                         )
+                    _zero_tail(metadata_expand.page_table, decode_length)
                 # TODO: Handle local attention metadata for draft decode when llama4 eagle is supported
             else:
                 # Normal Decode
@@ -2008,6 +2015,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                _zero_tail(metadata.page_table, max_seq_pages)
             else:
                 # When topk > 1, we need two specific target verify metadata, and then merge states
                 # 1. The first half of metadata for prefix tokens
@@ -2028,6 +2036,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                _zero_tail(metadata.page_table, max_seq_pages)
 
                 # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
                 metadata_expand = self.target_verify_metadata_topk_expand[bs]
@@ -2082,6 +2091,10 @@ class FlashAttentionBackend(AttentionBackend):
                 metadata_expand.page_table.copy_(
                     non_masked_page_table.gather(1, sort_order)
                 )
+                _zero_tail(
+                    metadata_expand.page_table,
+                    self.speculative_num_draft_tokens,
+                )
                 metadata_expand.cache_seqlens_int32.copy_(mask.sum(dim=1))
                 metadata_expand.cu_seqlens_k[1:].copy_(
                     torch.cumsum(
@@ -2122,6 +2135,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            _zero_tail(metadata.page_table, max_seq_pages)
 
         elif forward_mode.is_draft_extend_v2():
             metadata = self.draft_extend_metadata[bs]
@@ -2170,6 +2184,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            _zero_tail(metadata.page_table, max_seq_pages)
 
         if encoder_lens is not None:
             # Only support encoder size 1 for now
