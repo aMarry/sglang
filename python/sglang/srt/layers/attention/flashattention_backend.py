@@ -1889,10 +1889,6 @@ class FlashAttentionBackend(AttentionBackend):
         def zero_tail(table, used_cols):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
-                # Ensure any pending writes to the page table on the current stream
-                # complete before zeroing the tail so zero_ observes up-to-date data.
-                if tail.is_cuda:
-                    torch.cuda.current_stream(tail.device).synchronize()
                 tail.zero_()
 
         if forward_mode.is_decode_or_idle():
