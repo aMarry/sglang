@@ -1889,6 +1889,8 @@ class FlashAttentionBackend(AttentionBackend):
         def zero_tail(table, used_cols):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
+                # copy_ and zero_ run on the same stream; ordering here already waits
+                # for the preceding writes without an explicit synchronize.
                 tail.zero_()
 
         if forward_mode.is_decode_or_idle():
