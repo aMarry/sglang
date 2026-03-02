@@ -1060,7 +1060,12 @@ class CudaGraphRunner:
             graph_key = f"{get_current_stream_idx()}_{self.bs}"
         else:
             graph_key = self.bs
+        # Make sure metadata updates on the caller/default stream are visible to the
+        # captured graph stream before replaying the graph, and wait for the graph
+        # to finish before consuming its outputs.
+        self.stream.wait_stream(self.device_module.current_stream())
         self.graphs[graph_key].replay()
+        self.device_module.synchronize()
         output = self.output_buffers[graph_key]
 
         if isinstance(output, LogitsProcessorOutput):
