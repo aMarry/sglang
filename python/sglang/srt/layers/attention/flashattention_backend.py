@@ -1895,6 +1895,12 @@ class FlashAttentionBackend(AttentionBackend):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
                 if logger.isEnabledFor(logging.DEBUG) and LOG_FA3_TAIL_DEBUG:
+                    # Ensure any pending writes to the page table on the current stream
+                    # complete before the diagnostic readback. This keeps the debug
+                    # path safe without requiring callers to insert an explicit
+                    # device-wide synchronize.
+                    if tail.is_cuda:
+                        torch.cuda.current_stream(tail.device).synchronize()
                     # Guarding the block avoids evaluating the expensive count when DEBUG logging is off (logging arguments are eager).
                     # The env flag is a module-level constant; keeping it in the check keeps this debug path explicitly opt-in.
                     # Debug-only diagnostic (requires DEBUG logging and SGLANG_FA3_DEBUG_TAIL=1) to catch stale page indices during CUDA graph replay.
