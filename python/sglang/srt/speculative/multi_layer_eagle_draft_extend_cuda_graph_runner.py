@@ -277,6 +277,7 @@ class MultiLayerEagleDraftExtendCudaGraphRunner:
             torch.cuda.synchronize()
             self.model_runner.tp_group.barrier()
             run_once_fn()
+            torch.cuda.synchronize()
 
     def _capture_graph(self, graph, pool, stream, run_once_fn):
         with torch.cuda.graph(graph, pool=pool, stream=stream):
