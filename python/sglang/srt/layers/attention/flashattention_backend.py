@@ -2134,6 +2134,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            torch.cuda.current_stream(metadata.page_table.device).synchronize()
             zero_tail(metadata.page_table, max_seq_pages)
 
         elif forward_mode.is_draft_extend_v2():
