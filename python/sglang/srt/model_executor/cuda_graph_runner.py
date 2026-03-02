@@ -1068,7 +1068,7 @@ class CudaGraphRunner:
         # to finish before consuming its outputs.
         graph_stream.wait_stream(self.device_module.current_stream())
         self.graphs[graph_key].replay()
-        self.device_module.synchronize()
+        graph_stream.synchronize()
         output = self.output_buffers[graph_key]
 
         if isinstance(output, LogitsProcessorOutput):
