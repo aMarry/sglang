@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-import logging
 import os
 import numpy as np
 import torch
@@ -36,10 +35,6 @@ from sglang.jit_kernel.flash_attention_v4 import (
 from sglang.jit_kernel.flash_attention_v4 import (
     flash_attn_with_kvcache as flash_attn_with_kvcache_fa4,
 )
-
-logger = logging.getLogger(__name__)
-LOG_FA3_TAIL_DEBUG = os.getenv("SGLANG_FA3_DEBUG_TAIL") == "1"
-
 
 @dataclass
 class FlashAttentionMetadata:
@@ -1895,23 +1890,9 @@ class FlashAttentionBackend(AttentionBackend):
             if table is not None and table.shape[1] > used_cols:
                 tail = table[:, used_cols:]
                 # Ensure any pending writes to the page table on the current stream
-                # complete before reading or zeroing the tail, so `.count_nonzero().item()`
-                # and zero_ observe up-to-date data even when debug logging is disabled.
+                # complete before zeroing the tail so zero_ observes up-to-date data.
                 if tail.is_cuda:
                     torch.cuda.current_stream(tail.device).synchronize()
-                if logger.isEnabledFor(logging.DEBUG) and LOG_FA3_TAIL_DEBUG:
-                    # Guarding the block avoids evaluating the expensive count when DEBUG logging is off (logging arguments are eager).
-                    # The env flag is a module-level constant; keeping it in the check keeps this debug path explicitly opt-in.
-                    # Debug-only diagnostic (requires DEBUG logging and SGLANG_FA3_DEBUG_TAIL=1) to catch stale page indices during CUDA graph replay.
-                    # This performs a full tail scan and blocks the CUDA stream via `.item()`, so keep it enabled only briefly while collecting FA3 tail evidence.
-                    nonzero_count = tail.count_nonzero().item()
-                    logger.debug(
-                        "FA3 CUDA graph page_table tail reset "
-                        "(used_cols=%d total_cols=%d nonzero_tail=%d)",
-                        used_cols,
-                        table.shape[1],
-                        nonzero_count,
-                    )
                 tail.zero_()
 
         if forward_mode.is_decode_or_idle():
