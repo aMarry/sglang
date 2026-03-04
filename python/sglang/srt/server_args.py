@@ -2598,6 +2598,8 @@ class ServerArgs:
                 "BailingMoeV2_5ForCausalLM",
                 "MistralLarge3ForCausalLM",
                 "PixtralForConditionalGeneration",
+                "MiMoV2FlashForCausalLM",
+                "Step3p5ForCausalLM",
             ]:
                 if self.speculative_draft_model_path is None:
                     self.speculative_draft_model_path = self.model_path
@@ -2606,9 +2608,11 @@ class ServerArgs:
                     if model_arch not in [
                         "MistralLarge3ForCausalLM",
                         "PixtralForConditionalGeneration",
+                        "MiMoV2FlashForCausalLM",
+                        "Step3p5ForCausalLM",
                     ]:
                         logger.warning(
-                            "DeepSeek MTP does not require setting speculative_draft_model_path."
+                            "Built-in MTP models do not require setting speculative_draft_model_path."
                         )
 
             if self.speculative_num_steps is None:
@@ -5993,6 +5997,7 @@ def auto_choose_speculative_params(self: ServerArgs):
         "MistralLarge3ForCausalLM",
         "PixtralForConditionalGeneration",
         "MiMoV2FlashForCausalLM",
+        "Step3p5ForCausalLM",
     ]:
         return (3, 1, 4)
     elif arch in ["Grok1ForCausalLM", "Grok1VForCausalLM"]:
