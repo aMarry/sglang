@@ -440,6 +440,7 @@ class CudaGraphRunner:
         self.device = model_runner.device
         self.device_module = torch.get_device_module(self.device)
         self.graphs = {}
+        self.graph_streams = {}
         self.output_buffers = {}
         self.enable_torch_compile = model_runner.server_args.enable_torch_compile
         self.disable_padding = model_runner.server_args.disable_cuda_graph_padding
@@ -711,6 +712,7 @@ class CudaGraphRunner:
                     # For pd_multiplexing, we need to save the graph and output buffers
                     key = bs if stream_idx is None else f"{stream_idx}_{bs}"
                     self.graphs[key] = graph
+                    self.graph_streams[key] = self.stream
                     self.output_buffers[key] = output_buffers
 
         # Trigger CUDA graph capture for specific shapes.
@@ -1060,7 +1062,13 @@ class CudaGraphRunner:
             graph_key = f"{get_current_stream_idx()}_{self.bs}"
         else:
             graph_key = self.bs
+        graph_stream = self.graph_streams.get(graph_key, self.stream)
+        # Make sure metadata updates on the caller/default stream are visible to the
+        # captured graph stream before replaying the graph, and wait for the graph
+        # to finish before consuming its outputs.
+        graph_stream.wait_stream(self.device_module.current_stream())
         self.graphs[graph_key].replay()
+        graph_stream.synchronize()
         output = self.output_buffers[graph_key]
 
         if isinstance(output, LogitsProcessorOutput):

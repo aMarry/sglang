@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+import os
 import numpy as np
 import torch
 import triton
@@ -34,7 +35,6 @@ from sglang.jit_kernel.flash_attention_v4 import (
 from sglang.jit_kernel.flash_attention_v4 import (
     flash_attn_with_kvcache as flash_attn_with_kvcache_fa4,
 )
-
 
 @dataclass
 class FlashAttentionMetadata:
@@ -1886,6 +1886,13 @@ class FlashAttentionBackend(AttentionBackend):
         metadata = None
         metadata_expand = None
 
+        def zero_tail(table, used_cols):
+            if table is not None and table.shape[1] > used_cols:
+                tail = table[:, used_cols:]
+                # copy_ and zero_ run on the same stream; ordering here already waits
+                # for the preceding writes without an explicit synchronize.
+                tail.zero_()
+
         if forward_mode.is_decode_or_idle():
 
             if spec_info is not None:
@@ -1939,6 +1946,7 @@ class FlashAttentionBackend(AttentionBackend):
                         // self.page_size
                     )
                     metadata.page_table[:, :max_seq_pages].copy_(page_table)
+                    zero_tail(metadata.page_table, max_seq_pages)
                     # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
                     metadata_expand = self.draft_decode_metadata_topk_expand[bs]
                     decode_length = self.speculative_step_id + 1
@@ -1959,6 +1967,7 @@ class FlashAttentionBackend(AttentionBackend):
                         metadata_expand.page_table[:num_seqs, :decode_length].copy_(
                             cache_loc[:, :decode_length]
                         )
+                    zero_tail(metadata_expand.page_table, decode_length)
                 # TODO: Handle local attention metadata for draft decode when llama4 eagle is supported
             else:
                 # Normal Decode
@@ -2008,6 +2017,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                zero_tail(metadata.page_table, max_seq_pages)
             else:
                 # When topk > 1, we need two specific target verify metadata, and then merge states
                 # 1. The first half of metadata for prefix tokens
@@ -2028,6 +2038,7 @@ class FlashAttentionBackend(AttentionBackend):
                 ]
                 page_indices //= self.page_size
                 metadata.page_table[:, :max_seq_pages].copy_(page_indices)
+                zero_tail(metadata.page_table, max_seq_pages)
 
                 # 2. The second half of metadata for draft tokens (per_batch_num_tokens = topk)
                 metadata_expand = self.target_verify_metadata_topk_expand[bs]
@@ -2082,6 +2093,7 @@ class FlashAttentionBackend(AttentionBackend):
                 metadata_expand.page_table.copy_(
                     non_masked_page_table.gather(1, sort_order)
                 )
+                zero_tail(metadata_expand.page_table, self.speculative_num_draft_tokens)
                 metadata_expand.cache_seqlens_int32.copy_(mask.sum(dim=1))
                 metadata_expand.cu_seqlens_k[1:].copy_(
                     torch.cumsum(
@@ -2122,6 +2134,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            zero_tail(metadata.page_table, max_seq_pages)
 
         elif forward_mode.is_draft_extend_v2():
             metadata = self.draft_extend_metadata[bs]
@@ -2170,6 +2183,7 @@ class FlashAttentionBackend(AttentionBackend):
                 self.draft_extend_metadata["strided_indices"][:max_seq_pages],
             ]
             metadata.page_table[:, :max_seq_pages].copy_(page_indices // self.page_size)
+            zero_tail(metadata.page_table, max_seq_pages)
 
         if encoder_lens is not None:
             # Only support encoder size 1 for now
@@ -2627,11 +2641,15 @@ def normal_decode_set_metadata(
         strided_indices[:max_seq_pages][None, :],
     ]
     page_table[:, :max_seq_pages].copy_(page_indices // page_size)
+    if page_table.shape[1] > max_seq_pages:
+        page_table[:, max_seq_pages:].zero_()
 
     if swa_page_table is not None and token_to_kv_pool is not None:
         assert isinstance(token_to_kv_pool, SWAKVPool)
         swa_page_indices = token_to_kv_pool.translate_loc_from_full_to_swa(page_indices)
         swa_page_table[:, :max_seq_pages].copy_(swa_page_indices // page_size)
+        if swa_page_table.shape[1] > max_seq_pages:
+            swa_page_table[:, max_seq_pages:].zero_()
 
 
 @torch.compile(dynamic=True, backend=get_compiler_backend())
