@@ -103,8 +103,9 @@ class MultiLayerEagleWorker(TpModelWorker):
         # It will be captured later.
         backup_disable_cuda_graph = server_args.disable_cuda_graph
         server_args.disable_cuda_graph = True
-        # Share the allocator with a target worker.
-        # Draft and target worker own their own KV cache pools.
+        # Share req_to_token_pool and token_to_kv_pool_allocator with the target worker.
+        # The draft worker creates its own separate token_to_kv_pool for KV cache data,
+        # so the actual KV cache data is independent between draft and target workers.
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             target_worker.get_memory_pool()
         )
@@ -460,7 +461,8 @@ class MultiLayerEagleWorker(TpModelWorker):
         )
 
     def clear_cache_pool(self):
-        # allocator and kv cache pool are shared with target worker
+        # allocator is shared with target worker, which is cleared in scheduler.
+        # KV cache pool is separate but does not need explicit clearing.
         pass
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):

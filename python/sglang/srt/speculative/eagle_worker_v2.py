@@ -116,8 +116,9 @@ class EagleDraftWorker(BaseDraftWorker):
         backup_disable_cuda_graph = server_args.disable_cuda_graph
         server_args.disable_cuda_graph = True
 
-        # Share the allocator with a target worker.
-        # Draft and target worker own their own KV cache pools.
+        # Share req_to_token_pool and token_to_kv_pool_allocator with the target worker.
+        # The draft worker creates its own separate token_to_kv_pool for KV cache data,
+        # so the actual KV cache data is independent between draft and target workers.
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             target_worker.get_memory_pool()
         )
@@ -608,6 +609,9 @@ class EAGLEWorkerV2(BaseSpecWorker):
             server_args.speculative_algorithm
         )
 
+        # Share req_to_token_pool and token_to_kv_pool_allocator with the target worker.
+        # The draft worker creates its own separate token_to_kv_pool for KV cache data,
+        # so the actual KV cache data is independent between draft and target workers.
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             target_worker.get_memory_pool()
         )
@@ -644,7 +648,8 @@ class EAGLEWorkerV2(BaseSpecWorker):
         return self._draft_worker
 
     def clear_cache_pool(self):
-        # allocator and kv cache pool are shared with target worker, which are cleared in scheduler
+        # allocator is shared with target worker, which is cleared in scheduler.
+        # KV cache pool is separate but does not need explicit clearing.
         pass
 
     def forward_batch_generation(self, model_worker_batch: ModelWorkerBatch):

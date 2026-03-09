@@ -123,11 +123,11 @@ class ModelRunnerKVCacheMixin:
 
         # Get the number of layers used for KV cache calculation
         if self.is_draft_worker:
-            num_layers = getattr(
-                self.model_config.hf_config,
-                "num_nextn_predict_layers",
-                self.num_effective_layers,
-            )
+            # Use num_effective_layers which accounts for the actual number of
+            # decoder layers the draft model uses (e.g. 1 for MTP models like
+            # DeepSeek V3 even when num_nextn_predict_layers > 1, since all MTP
+            # steps share the same single decoder layer and KV cache).
+            num_layers = self.num_effective_layers
         elif mambaish := self.mambaish_config:
             effective_layer_ids = [
                 i
