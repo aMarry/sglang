@@ -707,6 +707,27 @@ class MultiLayerEagleMultiStepDraftExtendCudaGraphRunner:
         self.cuda_graph_buffers["accept_length"][: forward_batch.batch_size].copy_(
             batch_result.accept_lens
         )
+        self.cuda_graph_buffers["req_pool_indices"].zero_()
+
+        # Reset per-runner buffers to avoid accumulation of stale data
+        # across batch iterations, which is critical for MTP correctness
+        for runner in self.runners:
+            if runner is not None:
+                runner.hidden_states.zero_()
+                runner.extend_seq_lens.fill_(runner.num_tokens_per_bs)
+                runner.extend_start_loc.copy_(
+                    torch.arange(
+                        0,
+                        runner.max_bs * runner.num_tokens_per_bs,
+                        step=runner.num_tokens_per_bs,
+                        dtype=torch.int32,
+                        device=runner.extend_start_loc.device,
+                    )
+                )
+                # Reset output buffers to prevent stale data from previous iterations
+                # causing incorrect token generation (missing characters issue)
+                runner.mrope_positions.zero_()
+                runner.next_token_logits_buffer.zero_()
 
     def get_runner(self, step):
         return self.runners[step]
